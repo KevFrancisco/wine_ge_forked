@@ -2007,6 +2007,23 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
         return ret ? -1 : 0;
     }
 
+    case SIO_IDEAL_SEND_BACKLOG_QUERY:
+    {
+        DWORD ret;
+
+        if (!out_buff)
+        {
+            SetLastError(WSAEFAULT);
+            return SOCKET_ERROR;
+        }
+
+        ret = server_ioctl_sock( s, IOCTL_AFD_WINE_SEND_BACKLOG_QUERY, in_buff, in_size,
+                                 out_buff, out_size, ret_size, overlapped, completion );
+        SetLastError( ret );
+        if (!ret) *ret_size = sizeof(u_long);
+        return ret ? -1 : 0;
+    }
+
     case SIOCATMARK:
     {
         DWORD ret;
@@ -2388,6 +2405,17 @@ int WINAPI select( int count, fd_set *read_ptr, fd_set *write_ptr,
     NTSTATUS status;
 
     TRACE( "read %p, write %p, except %p, timeout %p\n", read_ptr, write_ptr, except_ptr, timeout );
+
+    static int is_RCS = -1;
+    if (is_RCS < 0) {
+        is_RCS = GetModuleHandleA(NULL) == GetModuleHandleA("RiotClientServices.exe");
+    }
+    const struct timeval zero_tv = { 0, 1000 };
+    if (is_RCS && read_ptr && write_ptr && except_ptr && timeout && timeout->tv_sec == 1 && timeout->tv_usec == 0) {
+        if (read_ptr->fd_count == 8 && write_ptr->fd_count == 0  && except_ptr->fd_count == 1) {
+            timeout = &zero_tv;
+        }
+    }
 
     if (!(sync_event = get_sync_event())) return -1;
 
