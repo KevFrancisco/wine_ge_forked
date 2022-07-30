@@ -1421,6 +1421,37 @@ NTSTATUS sock_ioctl( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, void *apc
             return STATUS_SUCCESS;
         }
 
+        case IOCTL_AFD_WINE_SEND_BACKLOG_QUERY:
+        {
+            int proto;
+            unsigned protolen = sizeof(protolen);
+
+            if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )))
+                return status;
+
+            if (out_size < sizeof(DWORD))
+            {
+                status = STATUS_BUFFER_TOO_SMALL;
+                break;
+            }
+
+            if (getsockopt( fd, SOL_SOCKET, SO_PROTOCOL, &proto, &protolen ) < 0)
+            {
+                status = sock_errno_to_status( errno );
+                break;
+            }
+
+            if(proto != IPPROTO_TCP)
+            {
+                status = STATUS_NOT_SUPPORTED;
+                break;
+            }
+
+            *(DWORD*)out_buffer = 0x10000; /* 64k */
+
+            break;
+        }
+
         case IOCTL_AFD_WINE_SIOCATMARK:
         {
             int value, ret;
