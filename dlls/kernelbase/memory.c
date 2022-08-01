@@ -703,7 +703,12 @@ HLOCAL WINAPI DECLSPEC_HOTPATCH LocalAlloc( UINT flags, SIZE_T size )
 
     if (!(flags & LMEM_MOVEABLE)) /* pointer */
     {
-        ptr = HeapAlloc( heap, heap_flags, size );
+        if (size >= 1024) ptr = HeapAlloc( heap, heap_flags, size );
+        else
+        {
+            ptr = HeapAlloc( heap, heap_flags, 1024 );
+            ptr = HeapReAlloc( heap, heap_flags, ptr, size );
+        }
         TRACE_(globalmem)( "return %p\n", ptr );
         return ptr;
     }

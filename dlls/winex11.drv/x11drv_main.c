@@ -46,6 +46,7 @@
 
 #include "x11drv.h"
 #include "xcomposite.h"
+#include "xfixes.h"
 #include "wine/server.h"
 #include "wine/unicode.h"
 #include "wine/debug.h"
@@ -65,6 +66,7 @@ Window root_window;
 BOOL usexvidmode = TRUE;
 BOOL usexrandr = TRUE;
 BOOL usexcomposite = TRUE;
+BOOL use_xfixes = FALSE;
 BOOL use_xkb = TRUE;
 BOOL use_take_focus = TRUE;
 BOOL use_primary_selection = FALSE;
@@ -82,6 +84,7 @@ BOOL shape_layered_windows = TRUE;
 int copy_default_colors = 128;
 int alloc_system_colors = 256;
 int xrender_error_base = 0;
+int xfixes_event_base = 0;
 HMODULE x11drv_module = 0;
 char *process_name = NULL;
 
@@ -140,6 +143,7 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
     "DndSelection",
     "_ICC_PROFILE",
     "_MOTIF_WM_HINTS",
+    "_NET_ACTIVE_WINDOW",
     "_NET_STARTUP_INFO_BEGIN",
     "_NET_STARTUP_INFO",
     "_NET_SUPPORTED",
@@ -575,6 +579,63 @@ sym_not_found:
 }
 #endif /* defined(SONAME_LIBXCOMPOSITE) */
 
+#ifdef SONAME_LIBXFIXES
+
+#define MAKE_FUNCPTR(f) typeof(f) * p##f;
+MAKE_FUNCPTR(XFixesQueryExtension)
+MAKE_FUNCPTR(XFixesQueryVersion)
+MAKE_FUNCPTR(XFixesCreateRegion)
+MAKE_FUNCPTR(XFixesCreateRegionFromGC)
+MAKE_FUNCPTR(XFixesSelectSelectionInput)
+#undef MAKE_FUNCPTR
+
+static void x11drv_load_xfixes(void)
+{
+    int event, error, major = 3, minor = 0;
+    void *xfixes;
+
+    if (!(xfixes = dlopen(SONAME_LIBXFIXES, RTLD_NOW)))
+    {
+        WARN("Xfixes library %s not found, disabled.\n", SONAME_LIBXFIXES);
+        return;
+    }
+
+#define LOAD_FUNCPTR(f) \
+    if (!(p##f = dlsym(xfixes, #f)))                          \
+    {                                                         \
+        WARN("Xfixes function %s not found, disabled\n", #f); \
+        dlclose(xfixes);                                      \
+        return;                                               \
+    }
+    LOAD_FUNCPTR(XFixesQueryExtension)
+    LOAD_FUNCPTR(XFixesQueryVersion)
+    LOAD_FUNCPTR(XFixesCreateRegion)
+    LOAD_FUNCPTR(XFixesCreateRegionFromGC)
+    LOAD_FUNCPTR(XFixesSelectSelectionInput)
+#undef LOAD_FUNCPTR
+
+    if (!pXFixesQueryExtension(gdi_display, &event, &error))
+    {
+        WARN("Xfixes extension not found, disabled.\n");
+        dlclose(xfixes);
+        return;
+    }
+
+    if (!pXFixesQueryVersion(gdi_display, &major, &minor) ||
+        major < 2)
+    {
+        WARN("Xfixes version 2.0 not found, disabled.\n");
+        dlclose(xfixes);
+        return;
+    }
+
+    TRACE("Xfixes, error %d, event %d, version %d.%d found\n",
+          error, event, major, minor);
+    use_xfixes = TRUE;
+    xfixes_event_base = event;
+}
+#endif /* SONAME_LIBXFIXES */
+
 static void init_visuals( Display *display, int screen )
 {
     int count;
@@ -677,15 +738,19 @@ static BOOL process_attach(void)
     X11DRV_XF86VM_Init();
     /* initialize XRandR */
     X11DRV_XRandR_Init();
+#ifdef SONAME_LIBXFIXES
+    x11drv_load_xfixes();
+#endif
 #ifdef SONAME_LIBXCOMPOSITE
     X11DRV_XComposite_Init();
 #endif
-    X11DRV_XInput2_Init();
+    x11drv_xinput_load();
 
 #ifdef HAVE_XKB
     if (use_xkb) use_xkb = XkbUseExtension( gdi_display, NULL, NULL );
 #endif
     X11DRV_InitKeyboard( gdi_display );
+    X11DRV_InitMouse( gdi_display );
     if (use_xim) use_xim = X11DRV_InitXIM( input_style );
 
     init_user_driver();
@@ -704,6 +769,8 @@ void X11DRV_ThreadDetach(void)
     if (data)
     {
         vulkan_thread_detach();
+        if (NtUserGetWindowThread( NtUserGetDesktopWindow(), NULL ) == GetCurrentThreadId())
+            x11drv_xinput_disable( data->display, DefaultRootWindow( data->display ), PointerMotionMask );
         if (data->xim) XCloseIM( data->xim );
         if (data->font_set) XFreeFontSet( data->display, data->font_set );
         XCloseDisplay( data->display );
@@ -773,6 +840,10 @@ struct x11drv_thread_data *x11drv_init_thread_data(void)
     NtUserGetThreadInfo()->driver_data = data;
 
     if (use_xim) X11DRV_SetupXIM();
+
+    x11drv_xinput_init();
+    if (NtUserGetWindowThread( NtUserGetDesktopWindow(), NULL ) == GetCurrentThreadId())
+        x11drv_xinput_enable( data->display, DefaultRootWindow( data->display ), PointerMotionMask );
 
     return data;
 }

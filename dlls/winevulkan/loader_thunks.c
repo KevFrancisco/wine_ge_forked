@@ -19,7 +19,7 @@ VkResult WINAPI vkAcquireNextImage2KHR(VkDevice device, const VkAcquireNextImage
     params.device = device;
     params.pAcquireInfo = pAcquireInfo;
     params.pImageIndex = pImageIndex;
-    return vk_unix_call(unix_vkAcquireNextImage2KHR, &params);
+    return unix_funcs->p_vk_call(unix_vkAcquireNextImage2KHR, &params);
 }
 
 VkResult WINAPI vkAcquireNextImageKHR(VkDevice device, VkSwapchainKHR swapchain, uint64_t timeout, VkSemaphore semaphore, VkFence fence, uint32_t *pImageIndex)
@@ -31,7 +31,7 @@ VkResult WINAPI vkAcquireNextImageKHR(VkDevice device, VkSwapchainKHR swapchain,
     params.semaphore = semaphore;
     params.fence = fence;
     params.pImageIndex = pImageIndex;
-    return vk_unix_call(unix_vkAcquireNextImageKHR, &params);
+    return unix_funcs->p_vk_call(unix_vkAcquireNextImageKHR, &params);
 }
 
 VkResult WINAPI vkAcquirePerformanceConfigurationINTEL(VkDevice device, const VkPerformanceConfigurationAcquireInfoINTEL *pAcquireInfo, VkPerformanceConfigurationINTEL *pConfiguration)
@@ -1710,6 +1710,14 @@ void WINAPI vkCmdSubpassShadingHUAWEI(VkCommandBuffer commandBuffer)
     unix_funcs->p_vk_call(unix_vkCmdSubpassShadingHUAWEI, &params);
 }
 
+void WINAPI vkCmdTraceRaysIndirect2KHR(VkCommandBuffer commandBuffer, VkDeviceAddress indirectDeviceAddress)
+{
+    struct vkCmdTraceRaysIndirect2KHR_params params;
+    params.commandBuffer = commandBuffer;
+    params.indirectDeviceAddress = indirectDeviceAddress;
+    unix_funcs->p_vk_call(unix_vkCmdTraceRaysIndirect2KHR, &params);
+}
+
 void WINAPI vkCmdTraceRaysIndirectKHR(VkCommandBuffer commandBuffer, const VkStridedDeviceAddressRegionKHR *pRaygenShaderBindingTable, const VkStridedDeviceAddressRegionKHR *pMissShaderBindingTable, const VkStridedDeviceAddressRegionKHR *pHitShaderBindingTable, const VkStridedDeviceAddressRegionKHR *pCallableShaderBindingTable, VkDeviceAddress indirectDeviceAddress)
 {
     struct vkCmdTraceRaysIndirectKHR_params params;
@@ -3238,6 +3246,16 @@ void WINAPI vkGetImageSubresourceLayout(VkDevice device, VkImage image, const Vk
     vk_unix_call(unix_vkGetImageSubresourceLayout, &params);
 }
 
+void WINAPI vkGetImageSubresourceLayout2EXT(VkDevice device, VkImage image, const VkImageSubresource2EXT *pSubresource, VkSubresourceLayout2EXT *pLayout)
+{
+    struct vkGetImageSubresourceLayout2EXT_params params;
+    params.device = device;
+    params.image = image;
+    params.pSubresource = pSubresource;
+    params.pLayout = pLayout;
+    vk_unix_call(unix_vkGetImageSubresourceLayout2EXT, &params);
+}
+
 VkResult WINAPI vkGetImageViewAddressNVX(VkDevice device, VkImageView imageView, VkImageViewAddressPropertiesNVX *pProperties)
 {
     struct vkGetImageViewAddressNVX_params params;
@@ -3691,6 +3709,15 @@ VkResult WINAPI vkGetPipelineExecutableStatisticsKHR(VkDevice device, const VkPi
     return vk_unix_call(unix_vkGetPipelineExecutableStatisticsKHR, &params);
 }
 
+VkResult WINAPI vkGetPipelinePropertiesEXT(VkDevice device, const VkPipelineInfoEXT *pPipelineInfo, VkBaseOutStructure *pPipelineProperties)
+{
+    struct vkGetPipelinePropertiesEXT_params params;
+    params.device = device;
+    params.pPipelineInfo = pPipelineInfo;
+    params.pPipelineProperties = pPipelineProperties;
+    return vk_unix_call(unix_vkGetPipelinePropertiesEXT, &params);
+}
+
 void WINAPI vkGetPrivateData(VkDevice device, VkObjectType objectType, uint64_t objectHandle, VkPrivateDataSlot privateDataSlot, uint64_t *pData)
 {
     struct vkGetPrivateData_params params;
@@ -3828,6 +3855,24 @@ VkResult WINAPI vkGetShaderInfoAMD(VkDevice device, VkPipeline pipeline, VkShade
     params.pInfoSize = pInfoSize;
     params.pInfo = pInfo;
     return vk_unix_call(unix_vkGetShaderInfoAMD, &params);
+}
+
+void WINAPI vkGetShaderModuleCreateInfoIdentifierEXT(VkDevice device, const VkShaderModuleCreateInfo *pCreateInfo, VkShaderModuleIdentifierEXT *pIdentifier)
+{
+    struct vkGetShaderModuleCreateInfoIdentifierEXT_params params;
+    params.device = device;
+    params.pCreateInfo = pCreateInfo;
+    params.pIdentifier = pIdentifier;
+    vk_unix_call(unix_vkGetShaderModuleCreateInfoIdentifierEXT, &params);
+}
+
+void WINAPI vkGetShaderModuleIdentifierEXT(VkDevice device, VkShaderModule shaderModule, VkShaderModuleIdentifierEXT *pIdentifier)
+{
+    struct vkGetShaderModuleIdentifierEXT_params params;
+    params.device = device;
+    params.shaderModule = shaderModule;
+    params.pIdentifier = pIdentifier;
+    vk_unix_call(unix_vkGetShaderModuleIdentifierEXT, &params);
 }
 
 VkResult WINAPI vkGetSwapchainImagesKHR(VkDevice device, VkSwapchainKHR swapchain, uint32_t *pSwapchainImageCount, VkImage *pSwapchainImages)
@@ -4440,6 +4485,7 @@ static const struct vulkan_func vk_device_dispatch_table[] =
     {"vkCmdSetViewportWithCount", vkCmdSetViewportWithCount},
     {"vkCmdSetViewportWithCountEXT", vkCmdSetViewportWithCountEXT},
     {"vkCmdSubpassShadingHUAWEI", vkCmdSubpassShadingHUAWEI},
+    {"vkCmdTraceRaysIndirect2KHR", vkCmdTraceRaysIndirect2KHR},
     {"vkCmdTraceRaysIndirectKHR", vkCmdTraceRaysIndirectKHR},
     {"vkCmdTraceRaysKHR", vkCmdTraceRaysKHR},
     {"vkCmdTraceRaysNV", vkCmdTraceRaysNV},
@@ -4584,6 +4630,7 @@ static const struct vulkan_func vk_device_dispatch_table[] =
     {"vkGetImageSparseMemoryRequirements2", vkGetImageSparseMemoryRequirements2},
     {"vkGetImageSparseMemoryRequirements2KHR", vkGetImageSparseMemoryRequirements2KHR},
     {"vkGetImageSubresourceLayout", vkGetImageSubresourceLayout},
+    {"vkGetImageSubresourceLayout2EXT", vkGetImageSubresourceLayout2EXT},
     {"vkGetImageViewAddressNVX", vkGetImageViewAddressNVX},
     {"vkGetImageViewHandleNVX", vkGetImageViewHandleNVX},
     {"vkGetMemoryHostPointerPropertiesEXT", vkGetMemoryHostPointerPropertiesEXT},
@@ -4592,6 +4639,7 @@ static const struct vulkan_func vk_device_dispatch_table[] =
     {"vkGetPipelineExecutableInternalRepresentationsKHR", vkGetPipelineExecutableInternalRepresentationsKHR},
     {"vkGetPipelineExecutablePropertiesKHR", vkGetPipelineExecutablePropertiesKHR},
     {"vkGetPipelineExecutableStatisticsKHR", vkGetPipelineExecutableStatisticsKHR},
+    {"vkGetPipelinePropertiesEXT", vkGetPipelinePropertiesEXT},
     {"vkGetPrivateData", vkGetPrivateData},
     {"vkGetPrivateDataEXT", vkGetPrivateDataEXT},
     {"vkGetQueryPoolResults", vkGetQueryPoolResults},
@@ -4605,6 +4653,8 @@ static const struct vulkan_func vk_device_dispatch_table[] =
     {"vkGetSemaphoreCounterValue", vkGetSemaphoreCounterValue},
     {"vkGetSemaphoreCounterValueKHR", vkGetSemaphoreCounterValueKHR},
     {"vkGetShaderInfoAMD", vkGetShaderInfoAMD},
+    {"vkGetShaderModuleCreateInfoIdentifierEXT", vkGetShaderModuleCreateInfoIdentifierEXT},
+    {"vkGetShaderModuleIdentifierEXT", vkGetShaderModuleIdentifierEXT},
     {"vkGetSwapchainImagesKHR", vkGetSwapchainImagesKHR},
     {"vkGetValidationCacheDataEXT", vkGetValidationCacheDataEXT},
     {"vkInitializePerformanceApiINTEL", vkInitializePerformanceApiINTEL},

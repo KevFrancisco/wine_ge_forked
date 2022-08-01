@@ -843,6 +843,10 @@ static BOOL nulldrv_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update )
                         hdc, rect.left - dx, rect.top - dy, SRCCOPY, 0, 0 );
 }
 
+static void nulldrv_SetActiveWindow( HWND hwnd )
+{
+}
+
 static void nulldrv_SetCapture( HWND hwnd, UINT flags )
 {
 }
@@ -1199,6 +1203,7 @@ static const struct user_driver_funcs lazy_load_driver =
     nulldrv_MsgWaitForMultipleObjectsEx,
     nulldrv_ReleaseDC,
     nulldrv_ScrollDC,
+    nulldrv_SetActiveWindow,
     nulldrv_SetCapture,
     nulldrv_SetFocus,
     loaderdrv_SetLayeredWindowAttributes,
@@ -1271,6 +1276,7 @@ void CDECL __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT v
     SET_USER_FUNC(MsgWaitForMultipleObjectsEx);
     SET_USER_FUNC(ReleaseDC);
     SET_USER_FUNC(ScrollDC);
+    SET_USER_FUNC(SetActiveWindow);
     SET_USER_FUNC(SetCapture);
     SET_USER_FUNC(SetFocus);
     SET_USER_FUNC(SetLayeredWindowAttributes);
