@@ -39,6 +39,13 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(heap);
 
+/* HeapCompatibilityInformation values */
+
+#define HEAP_STD 0
+#define HEAP_LAL 1
+#define HEAP_LFH 2
+
+
 /* undocumented RtlWalkHeap structure */
 
 struct rtl_heap_entry
@@ -187,6 +194,7 @@ struct heap
     /* end of the Windows 10 compatible struct layout */
 
     BOOL             shared;        /* System shared heap */
+    LONG             compat_info;   /* HeapCompatibilityInformation / heap frontend type */
     struct list      entry;         /* Entry in process heap list */
     struct list      subheap_list;  /* Sub-heap list */
     struct list      large_list;    /* Large blocks list */
@@ -470,13 +478,13 @@ static inline ULONG heap_get_flags( const struct heap *heap, ULONG flags )
 static void heap_lock( struct heap *heap, ULONG flags )
 {
     if (heap_get_flags( heap, flags ) & HEAP_NO_SERIALIZE) return;
-    RtlEnterCriticalSection( &heap->cs );
+    enter_critical_section( &heap->cs );
 }
 
 static void heap_unlock( struct heap *heap, ULONG flags )
 {
     if (heap_get_flags( heap, flags ) & HEAP_NO_SERIALIZE) return;
-    RtlLeaveCriticalSection( &heap->cs );
+    leave_critical_section( &heap->cs );
 }
 
 static void heap_set_status( const struct heap *heap, ULONG flags, NTSTATUS status )
@@ -956,6 +964,7 @@ static SUBHEAP *HEAP_CreateSubHeap( struct heap **heap_ptr, LPVOID address, DWOR
         heap->auto_flags    = (flags & HEAP_GROWABLE);
         heap->flags         = (flags & ~HEAP_SHARED);
         heap->shared        = (flags & HEAP_SHARED) != 0;
+        heap->compat_info   = HEAP_STD;
         heap->magic         = HEAP_MAGIC;
         heap->grow_size     = max( HEAP_DEF_SIZE, totalSize );
         heap->min_size      = commitSize;
@@ -1357,6 +1366,8 @@ static void heap_set_debug_flags( HANDLE handle )
                                               MAX_FREE_PENDING * sizeof(*heap->pending_free) );
         heap->pending_pos = 0;
     }
+
+    HEAP_lfh_set_debug_flags( flags );
 }
 
 
@@ -1397,9 +1408,9 @@ HANDLE WINAPI RtlCreateHeap( ULONG flags, PVOID addr, SIZE_T totalSize, SIZE_T c
     /* link it into the per-process heap list */
     if (process_heap)
     {
-        RtlEnterCriticalSection( &process_heap->cs );
+        enter_critical_section( &process_heap->cs );
         list_add_head( &process_heap->entry, &heap->entry );
-        RtlLeaveCriticalSection( &process_heap->cs );
+        leave_critical_section( &process_heap->cs );
     }
     else if (!addr)
     {
@@ -1455,9 +1466,9 @@ HANDLE WINAPI RtlDestroyHeap( HANDLE handle )
     if (heap == process_heap) return handle; /* cannot delete the main process heap */
 
     /* remove it from the per-process list */
-    RtlEnterCriticalSection( &process_heap->cs );
+    enter_critical_section( &process_heap->cs );
     list_remove( &heap->entry );
-    RtlLeaveCriticalSection( &process_heap->cs );
+    leave_critical_section( &process_heap->cs );
 
     heap->cs.DebugInfo->Spare[0] = 0;
     RtlDeleteCriticalSection( &heap->cs );
@@ -1545,11 +1556,16 @@ void *WINAPI DECLSPEC_HOTPATCH RtlAllocateHeap( HANDLE handle, ULONG flags, SIZE
 
     if (!(heap = unsafe_heap_from_handle( handle )))
         status = STATUS_INVALID_HANDLE;
-    else
+    else switch (InterlockedOr( &heap->compat_info, 0 ))
     {
+    case HEAP_LFH:
+        if (!(status = HEAP_lfh_allocate( heap, heap_get_flags( heap, flags ), size, &ptr ))) break;
+        /* fallthrough */
+    default:
         heap_lock( heap, flags );
         status = heap_allocate( heap, heap_get_flags( heap, flags ), size, &ptr );
         heap_unlock( heap, flags );
+        break;
     }
 
     if (!status) valgrind_notify_alloc( ptr, size, flags & HEAP_ZERO_MEMORY );
@@ -1586,11 +1602,16 @@ BOOLEAN WINAPI DECLSPEC_HOTPATCH RtlFreeHeap( HANDLE handle, ULONG flags, void *
 
     if (!(heap = unsafe_heap_from_handle( handle )))
         status = STATUS_INVALID_PARAMETER;
-    else
+    else switch (InterlockedOr( &heap->compat_info, 0 ))
     {
+    case HEAP_LFH:
+        if (!(status = HEAP_lfh_free( heap, heap_get_flags( heap, flags ), ptr ))) break;
+        /* fallthrough */
+    default:
         heap_lock( heap, flags );
         status = heap_free( heap, ptr );
         heap_unlock( heap, flags );
+        break;
     }
 
     TRACE( "handle %p, flags %#x, ptr %p, return %u, status %#x.\n", handle, flags, ptr, !status, status );
@@ -1670,11 +1691,16 @@ void *WINAPI RtlReAllocateHeap( HANDLE handle, ULONG flags, void *ptr, SIZE_T si
 
     if (!(heap = unsafe_heap_from_handle( handle )))
         status = STATUS_INVALID_HANDLE;
-    else
+    else switch (InterlockedOr( &heap->compat_info, 0 ))
     {
+    case HEAP_LFH:
+        if (!(status = HEAP_lfh_reallocate( heap, flags, ptr, size, &ret ))) break;
+        /* fallthrough */
+    default:
         heap_lock( heap, flags );
         status = heap_reallocate( heap, heap_get_flags( heap, flags ), ptr, size, &ret );
         heap_unlock( heap, flags );
+        break;
     }
 
     TRACE( "handle %p, flags %#x, ptr %p, size %#Ix, return %p, status %#x.\n", handle, flags, ptr, size, ret, status );
@@ -1775,11 +1801,16 @@ SIZE_T WINAPI RtlSizeHeap( HANDLE handle, ULONG flags, const void *ptr )
 
     if (!(heap = unsafe_heap_from_handle( handle )))
         status = STATUS_INVALID_PARAMETER;
-    else
+    else switch (InterlockedOr( &heap->compat_info, 0 ))
     {
+    case HEAP_LFH:
+        if (!(status = HEAP_lfh_get_allocated_size( heap, heap_get_flags( heap, flags ), ptr, &size ))) break;
+        /* fallthrough */
+    default:
         heap_lock( heap, flags );
         status = heap_size( heap, ptr, &size );
         heap_unlock( heap, flags );
+        break;
     }
 
     TRACE( "handle %p, flags %#x, ptr %p, return %#Ix, status %#x.\n", handle, flags, ptr, size, status );
@@ -1799,12 +1830,17 @@ BOOLEAN WINAPI RtlValidateHeap( HANDLE handle, ULONG flags, const void *ptr )
 
     if (!(heap = unsafe_heap_from_handle( handle )))
         ret = FALSE;
-    else
+    else switch (InterlockedOr( &heap->compat_info, 0 ))
     {
+    case HEAP_LFH:
+        if ((ret = !HEAP_lfh_validate( heap, heap_get_flags( heap, flags ), ptr ))) break;
+        /* fallthrough */
+    default:
         heap_lock( heap, flags );
         if (ptr) ret = heap_validate_ptr( heap, ptr, &subheap );
         else ret = heap_validate( heap );
         heap_unlock( heap, flags );
+        break;
     }
 
     TRACE( "handle %p, flags %#x, ptr %p, return %u.\n", handle, flags, ptr, !!ret );
@@ -1959,7 +1995,7 @@ ULONG WINAPI RtlGetProcessHeaps( ULONG count, HANDLE *heaps )
     ULONG total = 1;  /* main heap */
     struct list *ptr;
 
-    RtlEnterCriticalSection( &process_heap->cs );
+    enter_critical_section( &process_heap->cs );
     LIST_FOR_EACH( ptr, &process_heap->entry ) total++;
     if (total <= count)
     {
@@ -1967,7 +2003,7 @@ ULONG WINAPI RtlGetProcessHeaps( ULONG count, HANDLE *heaps )
         LIST_FOR_EACH( ptr, &process_heap->entry )
             *heaps++ = LIST_ENTRY( ptr, struct heap, entry );
     }
-    RtlLeaveCriticalSection( &process_heap->cs );
+    leave_critical_section( &process_heap->cs );
     return total;
 }
 
@@ -1975,21 +2011,23 @@ ULONG WINAPI RtlGetProcessHeaps( ULONG count, HANDLE *heaps )
  *           RtlQueryHeapInformation    (NTDLL.@)
  */
 NTSTATUS WINAPI RtlQueryHeapInformation( HANDLE handle, HEAP_INFORMATION_CLASS info_class,
-                                         void *info, SIZE_T size_in, PSIZE_T size_out )
+                                         void *info, SIZE_T size_in, SIZE_T *size_out )
 {
+    struct heap *heap;
+
+    TRACE( "handle %p, info_class %u, info %p, size_in %Iu, size_out %p.\n", handle, info_class, info, size_in, size_out );
+
     switch (info_class)
     {
     case HeapCompatibilityInformation:
+        if (!(heap = unsafe_heap_from_handle( handle ))) return STATUS_ACCESS_VIOLATION;
         if (size_out) *size_out = sizeof(ULONG);
-
-        if (size_in < sizeof(ULONG))
-            return STATUS_BUFFER_TOO_SMALL;
-
-        *(ULONG *)info = 0; /* standard heap */
+        if (size_in < sizeof(ULONG)) return STATUS_BUFFER_TOO_SMALL;
+        *(ULONG *)info = InterlockedOr( &heap->compat_info, 0 );
         return STATUS_SUCCESS;
 
     default:
-        FIXME("Unknown heap information class %u\n", info_class);
+        FIXME( "HEAP_INFORMATION_CLASS %u not implemented!\n", info_class );
         return STATUS_INVALID_INFO_CLASS;
     }
 }
@@ -1999,8 +2037,29 @@ NTSTATUS WINAPI RtlQueryHeapInformation( HANDLE handle, HEAP_INFORMATION_CLASS i
  */
 NTSTATUS WINAPI RtlSetHeapInformation( HANDLE handle, HEAP_INFORMATION_CLASS info_class, void *info, SIZE_T size )
 {
-    FIXME( "handle %p, info_class %d, info %p, size %ld stub!\n", handle, info_class, info, size );
-    return STATUS_SUCCESS;
+    struct heap *heap;
+
+    TRACE( "handle %p, info_class %u, info %p, size %Iu.\n", handle, info_class, info, size );
+
+    switch (info_class)
+    {
+    case HeapCompatibilityInformation:
+        if (size < sizeof(ULONG)) return STATUS_BUFFER_TOO_SMALL;
+        if (!(heap = unsafe_heap_from_handle( handle ))) return STATUS_INVALID_HANDLE;
+
+        if (*(ULONG *)info != 0 && *(ULONG *)info != HEAP_LFH)
+        {
+            FIXME( "HeapCompatibilityInformation %u not implemented!\n", *(ULONG *)info );
+            return STATUS_UNSUCCESSFUL;
+        }
+
+        if (InterlockedCompareExchange( &heap->compat_info, *(ULONG *)info, 0 )) return STATUS_UNSUCCESSFUL;
+        return STATUS_SUCCESS;
+
+    default:
+        FIXME( "HEAP_INFORMATION_CLASS %u not implemented!\n", info_class );
+        return STATUS_SUCCESS;
+    }
 }
 
 /***********************************************************************
@@ -2021,19 +2080,27 @@ BOOLEAN WINAPI RtlGetUserInfoHeap( HANDLE handle, ULONG flags, void *ptr, void *
 
     if (!(heap = unsafe_heap_from_handle( handle ))) return TRUE;
 
-    heap_lock( heap, flags );
-    if ((block = unsafe_block_from_ptr( heap, ptr, &subheap )) && !subheap)
+    switch (InterlockedOr( &heap->compat_info, 0 ))
     {
-        const ARENA_LARGE *large = CONTAINING_RECORD( block, ARENA_LARGE, block );
-        *user_value = large->user_value;
+    case HEAP_LFH:
+        if (!HEAP_lfh_get_user_info( heap, heap_get_flags( heap, flags ), ptr, user_value )) break;
+        /* fallthrough */
+    default:
+        heap_lock( heap, flags );
+        if ((block = unsafe_block_from_ptr( heap, ptr, &subheap )) && !subheap)
+        {
+            const ARENA_LARGE *large = CONTAINING_RECORD( block, ARENA_LARGE, block );
+            *user_value = large->user_value;
+        }
+        else if (block)
+        {
+            tmp = (char *)block + block_get_size( block ) - block->tail_size + sizeof(void *);
+            if ((heap_get_flags( heap, flags ) & HEAP_TAIL_CHECKING_ENABLED) || RUNNING_ON_VALGRIND) tmp += ALIGNMENT;
+            *user_value = *(void **)tmp;
+        }
+        heap_unlock( heap, flags );
+        break;
     }
-    else if (block)
-    {
-        tmp = (char *)block + block_get_size( block ) - block->tail_size + sizeof(void *);
-        if ((heap_get_flags( heap, flags ) & HEAP_TAIL_CHECKING_ENABLED) || RUNNING_ON_VALGRIND) tmp += ALIGNMENT;
-        *user_value = *(void **)tmp;
-    }
-    heap_unlock( heap, flags );
 
     return TRUE;
 }
@@ -2053,20 +2120,28 @@ BOOLEAN WINAPI RtlSetUserValueHeap( HANDLE handle, ULONG flags, void *ptr, void 
 
     if (!(heap = unsafe_heap_from_handle( handle ))) return TRUE;
 
-    heap_lock( heap, flags );
-    if (!(block = unsafe_block_from_ptr( heap, ptr, &subheap ))) ret = FALSE;
-    else if (!subheap)
+    switch (InterlockedOr( &heap->compat_info, 0 ))
     {
-        ARENA_LARGE *large = CONTAINING_RECORD( block, ARENA_LARGE, block );
-        large->user_value = user_value;
+    case HEAP_LFH:
+        if ((ret = !HEAP_lfh_set_user_info( heap, heap_get_flags( heap, flags ), ptr, user_value ))) break;
+        /* fallthrough */
+    default:
+        heap_lock( heap, flags );
+        if (!(block = unsafe_block_from_ptr( heap, ptr, &subheap ))) ret = FALSE;
+        else if (!subheap)
+        {
+            ARENA_LARGE *large = CONTAINING_RECORD( block, ARENA_LARGE, block );
+            large->user_value = user_value;
+        }
+        else
+        {
+            tmp = (char *)block + block_get_size( block ) - block->tail_size + sizeof(void *);
+            if ((heap_get_flags( heap, flags ) & HEAP_TAIL_CHECKING_ENABLED) || RUNNING_ON_VALGRIND) tmp += ALIGNMENT;
+            *(void **)tmp = user_value;
+        }
+        heap_unlock( heap, flags );
+        break;
     }
-    else
-    {
-        tmp = (char *)block + block_get_size( block ) - block->tail_size + sizeof(void *);
-        if ((heap_get_flags( heap, flags ) & HEAP_TAIL_CHECKING_ENABLED) || RUNNING_ON_VALGRIND) tmp += ALIGNMENT;
-        *(void **)tmp = user_value;
-    }
-    heap_unlock( heap, flags );
 
     return ret;
 }
@@ -2078,4 +2153,9 @@ BOOLEAN WINAPI RtlSetUserFlagsHeap( HANDLE handle, ULONG flags, void *ptr, ULONG
 {
     FIXME( "handle %p, flags %#x, ptr %p, clear %#x, set %#x stub!\n", handle, flags, ptr, clear, set );
     return FALSE;
+}
+
+void HEAP_notify_thread_destroy( BOOLEAN last )
+{
+    HEAP_lfh_notify_thread_destroy( last );
 }

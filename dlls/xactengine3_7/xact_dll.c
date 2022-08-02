@@ -69,8 +69,7 @@ typedef struct _XACT3EngineImpl {
     XACT_GETOVERLAPPEDRESULT_CALLBACK pGetOverlappedResult;
     XACT_NOTIFICATION_CALLBACK notification_callback;
 
-    void *wb_prepared_context;
-    void *wb_destroyed_context;
+    void *contexts[17];
     struct wine_rb_tree wb_wrapper_lookup;
     CRITICAL_SECTION wb_wrapper_lookup_cs;
 } XACT3EngineImpl;
@@ -112,6 +111,50 @@ static void wrapper_remove_entry(XACT3EngineImpl *engine, void *key)
         lookup = WINE_RB_ENTRY_VALUE(entry, struct wrapper_lookup, entry);
         HeapFree(GetProcessHeap(), 0, lookup);
     }
+}
+
+static HRESULT wrapper_add_entry(XACT3EngineImpl *engine, void *fwb, void *xact)
+{
+    struct wrapper_lookup *lookup;
+    UINT ret;
+
+    lookup = HeapAlloc(GetProcessHeap(), 0, sizeof(*lookup));
+    if (!lookup)
+    {
+        ERR("Failed to allocate wrapper_lookup!\n");
+        return E_OUTOFMEMORY;
+    }
+    lookup->fact = fwb;
+    lookup->xact = xact;
+
+    EnterCriticalSection(&engine->wb_wrapper_lookup_cs);
+    ret = wine_rb_put(&engine->wb_wrapper_lookup, lookup->fact, &lookup->entry);
+    LeaveCriticalSection(&engine->wb_wrapper_lookup_cs);
+
+    if (ret)
+    {
+        WARN("wrapper_lookup already present in the tree??\n");
+        HeapFree(GetProcessHeap(), 0, lookup);
+    }
+
+    return S_OK;
+}
+
+/* Must be protected by engine->wb_wrapper_lookup_cs */
+static void* wrapper_find_entry(XACT3EngineImpl *engine, void *faudio)
+{
+    struct wrapper_lookup *lookup;
+    struct wine_rb_entry *entry;
+
+    entry = wine_rb_get(&engine->wb_wrapper_lookup, faudio);
+    if (entry)
+    {
+        lookup = WINE_RB_ENTRY_VALUE(entry, struct wrapper_lookup, entry);
+        return lookup->xact;
+    }
+
+    WARN("cannot find interface in wrapper lookup\n");
+    return NULL;
 }
 
 typedef struct _XACT3CueImpl {
@@ -319,6 +362,7 @@ typedef struct _XACT3SoundBankImpl {
     IXACT3SoundBank IXACT3SoundBank_iface;
 
     FACTSoundBank *fact_soundbank;
+    XACT3EngineImpl *engine;
 } XACT3SoundBankImpl;
 
 static inline XACT3SoundBankImpl *impl_from_IXACT3SoundBank(IXACT3SoundBank *iface)
@@ -366,7 +410,9 @@ static HRESULT WINAPI IXACT3SoundBankImpl_Prepare(IXACT3SoundBank *iface,
     XACT3SoundBankImpl *This = impl_from_IXACT3SoundBank(iface);
     XACT3CueImpl *cue;
     FACTCue *fcue;
+
     UINT ret;
+    HRESULT hr;
 
     TRACE("(%p)->(%u, 0x%lx, %lu, %p)\n", This, nCueIndex, dwFlags, timeOffset,
             ppCue);
@@ -384,6 +430,15 @@ static HRESULT WINAPI IXACT3SoundBankImpl_Prepare(IXACT3SoundBank *iface,
     {
         FACTCue_Destroy(fcue);
         ERR("Failed to allocate XACT3CueImpl!\n");
+        return E_OUTOFMEMORY;
+    }
+
+    hr = wrapper_add_entry(This->engine, fcue, &cue->IXACT3Cue_iface);
+    if (FAILED(hr))
+    {
+        FACTCue_Destroy(fcue);
+        HeapFree(GetProcessHeap(), 0, cue);
+        ERR("Failed to allocate wrapper_lookup!\n");
         return E_OUTOFMEMORY;
     }
 
@@ -426,6 +481,15 @@ static HRESULT WINAPI IXACT3SoundBankImpl_Play(IXACT3SoundBank *iface,
         {
             FACTCue_Destroy(fcue);
             ERR("Failed to allocate XACT3CueImpl!\n");
+            return E_OUTOFMEMORY;
+        }
+
+        hr = wrapper_add_entry(This->engine, fcue, &cue->IXACT3Cue_iface);
+        if (FAILED(hr))
+        {
+            FACTCue_Destroy(fcue);
+            HeapFree(GetProcessHeap(), 0, cue);
+            ERR("Failed to allocate wrapper_lookup!\n");
             return E_OUTOFMEMORY;
         }
 
@@ -669,6 +733,7 @@ static HRESULT WINAPI IXACT3WaveBankImpl_Prepare(IXACT3WaveBank *iface,
     XACT3WaveImpl *wave;
     FACTWave *fwave;
     UINT ret;
+    HRESULT hr;
 
     TRACE("(%p)->(0x%x, %lu, 0x%lx, %u, %p)\n", This, nWaveIndex, dwFlags,
             dwPlayOffset, nLoopCount, ppWave);
@@ -686,6 +751,15 @@ static HRESULT WINAPI IXACT3WaveBankImpl_Prepare(IXACT3WaveBank *iface,
     {
         FACTWave_Destroy(fwave);
         ERR("Failed to allocate XACT3WaveImpl!\n");
+        return E_OUTOFMEMORY;
+    }
+
+    hr = wrapper_add_entry(This->engine, fwave, &wave->IXACT3Wave_iface);
+    if (FAILED(hr))
+    {
+        FACTWave_Destroy(fwave);
+        HeapFree(GetProcessHeap(), 0, wave);
+        ERR("Failed to allocate wrapper_lookup!\n");
         return E_OUTOFMEMORY;
     }
 
@@ -728,6 +802,15 @@ static HRESULT WINAPI IXACT3WaveBankImpl_Play(IXACT3WaveBank *iface,
         {
             FACTWave_Destroy(fwave);
             ERR("Failed to allocate XACT3WaveImpl!\n");
+            return E_OUTOFMEMORY;
+        }
+
+        hr = wrapper_add_entry(This->engine, fwave, &wave->IXACT3Wave_iface);
+        if (FAILED(hr))
+        {
+            FACTWave_Destroy(fwave);
+            HeapFree(GetProcessHeap(), 0, wave);
+            ERR("Failed to allocate wrapper_lookup!\n");
             return E_OUTOFMEMORY;
         }
 
@@ -927,10 +1010,8 @@ static void FACTCALL fact_notification_cb(const FACTNotification *notification)
 {
     XACT3EngineImpl *engine = (XACT3EngineImpl *)notification->pvContext;
     XACT_NOTIFICATION xnotification;
-    struct wrapper_lookup *lookup;
-    struct wine_rb_entry *entry;
 
-    TRACE("notification %p\n", notification->pvContext);
+    TRACE("notification %d, context %p\n", notification->type, notification->pvContext);
 
     /* Older versions of FAudio don't pass through the context */
     if (!engine)
@@ -941,33 +1022,52 @@ static void FACTCALL fact_notification_cb(const FACTNotification *notification)
 
     xnotification.type = xact_notification_type_from_fact(notification->type);
     xnotification.timeStamp = notification->timeStamp;
+    xnotification.pvContext = engine->contexts[notification->type - 1];
 
+    EnterCriticalSection(&engine->wb_wrapper_lookup_cs);
     if (notification->type == XACTNOTIFICATIONTYPE_WAVEBANKPREPARED
             || notification->type == XACTNOTIFICATIONTYPE_WAVEBANKDESTROYED)
     {
-        EnterCriticalSection(&engine->wb_wrapper_lookup_cs);
-        entry = wine_rb_get(&engine->wb_wrapper_lookup, notification->waveBank.pWaveBank);
-        if (!entry)
-        {
-            WARN("cannot find wave bank in wrapper lookup\n");
-            xnotification.waveBank.pWaveBank = NULL;
-        }
-        else
-        {
-            lookup = WINE_RB_ENTRY_VALUE(entry, struct wrapper_lookup, entry);
-            xnotification.waveBank.pWaveBank = lookup->xact;
-        }
-        LeaveCriticalSection(&engine->wb_wrapper_lookup_cs);
-        if (notification->type == XACTNOTIFICATIONTYPE_WAVEBANKPREPARED)
-            xnotification.pvContext = engine->wb_prepared_context;
-        else
-            xnotification.pvContext = engine->wb_destroyed_context;
+        xnotification.waveBank.pWaveBank = wrapper_find_entry(engine, notification->waveBank.pWaveBank);
+    }
+    else if(notification->type == XACTNOTIFICATIONTYPE_SOUNDBANKDESTROYED)
+    {
+        xnotification.soundBank.pSoundBank = wrapper_find_entry(engine, notification->soundBank.pSoundBank);
+    }
+    else if (notification->type == XACTNOTIFICATIONTYPE_WAVESTOP
+#if XACT3_VER >= 0x0205
+             || notification->type == XACTNOTIFICATIONTYPE_WAVEDESTROYED
+             || notification->type == XACTNOTIFICATIONTYPE_WAVELOOPED
+             || notification->type == XACTNOTIFICATIONTYPE_WAVEPLAY
+             || notification->type == XACTNOTIFICATIONTYPE_WAVEPREPARED)
+#else
+             )
+#endif
+    {
+        xnotification.wave.cueIndex = notification->wave.cueIndex;
+        xnotification.wave.pCue = wrapper_find_entry(engine, notification->wave.pCue);
+        xnotification.wave.pSoundBank = wrapper_find_entry(engine, notification->wave.pSoundBank);
+#if XACT3_VER >= 0x0205
+        xnotification.wave.pWave = wrapper_find_entry(engine, notification->wave.pWave);
+#endif
+        xnotification.wave.pWaveBank = wrapper_find_entry(engine, notification->wave.pWaveBank);
+    }
+    else if (notification->type == XACTNOTIFICATIONTYPE_CUEPLAY ||
+             notification->type == XACTNOTIFICATIONTYPE_CUEPREPARED ||
+             notification->type == XACTNOTIFICATIONTYPE_CUESTOP ||
+             notification->type == XACTNOTIFICATIONTYPE_CUEDESTROYED)
+    {
+        xnotification.cue.pCue = wrapper_find_entry(engine, notification->cue.pCue);
+        xnotification.cue.cueIndex = notification->cue.cueIndex;
+        xnotification.cue.pSoundBank = wrapper_find_entry(engine, notification->cue.pSoundBank);
     }
     else
     {
+        LeaveCriticalSection(&engine->wb_wrapper_lookup_cs);
         FIXME("Unsupported callback type %d\n", notification->type);
         return;
     }
+    LeaveCriticalSection(&engine->wb_wrapper_lookup_cs);
 
     engine->notification_callback(&xnotification);
 }
@@ -1061,6 +1161,7 @@ static HRESULT WINAPI IXACT3EngineImpl_CreateSoundBank(IXACT3Engine *iface,
     XACT3SoundBankImpl *sb;
     FACTSoundBank *fsb;
     UINT ret;
+    HRESULT hr;
 
     TRACE("(%p)->(%p, %lu, 0x%lx, 0x%lx, %p): stub!\n", This, pvBuffer, dwSize, dwFlags,
             dwAllocAttributes, ppSoundBank);
@@ -1081,8 +1182,18 @@ static HRESULT WINAPI IXACT3EngineImpl_CreateSoundBank(IXACT3Engine *iface,
         return E_OUTOFMEMORY;
     }
 
+    hr = wrapper_add_entry(This, fsb, &sb->IXACT3SoundBank_iface);
+    if (FAILED(hr))
+    {
+        FACTSoundBank_Destroy(fsb);
+        HeapFree(GetProcessHeap(), 0, sb);
+        ERR("Failed to allocate wrapper_lookup!\n");
+        return E_OUTOFMEMORY;
+    }
+
     sb->IXACT3SoundBank_iface.lpVtbl = &XACT3SoundBank_Vtbl;
     sb->fact_soundbank = fsb;
+    sb->engine = This;
     *ppSoundBank = &sb->IXACT3SoundBank_iface;
 
     TRACE("Created SoundBank: %p\n", sb);
@@ -1095,9 +1206,9 @@ static HRESULT WINAPI IXACT3EngineImpl_CreateInMemoryWaveBank(IXACT3Engine *ifac
         DWORD dwAllocAttributes, IXACT3WaveBank **ppWaveBank)
 {
     XACT3EngineImpl *This = impl_from_IXACT3Engine(iface);
-    struct wrapper_lookup *lookup;
     XACT3WaveBankImpl *wb;
     FACTWaveBank *fwb;
+    HRESULT hr;
     UINT ret;
 
     TRACE("(%p)->(%p, %lu, 0x%lx, 0x%lx, %p)\n", This, pvBuffer, dwSize, dwFlags,
@@ -1119,27 +1230,13 @@ static HRESULT WINAPI IXACT3EngineImpl_CreateInMemoryWaveBank(IXACT3Engine *ifac
         return E_OUTOFMEMORY;
     }
 
-    lookup = HeapAlloc(GetProcessHeap(), 0, sizeof(*lookup));
-    if (!lookup)
+    hr = wrapper_add_entry(This, fwb, &wb->IXACT3WaveBank_iface);
+    if (FAILED(hr))
     {
         FACTWaveBank_Destroy(fwb);
         HeapFree(GetProcessHeap(), 0, wb);
         ERR("Failed to allocate wrapper_lookup!\n");
         return E_OUTOFMEMORY;
-    }
-    lookup->fact = fwb;
-    lookup->xact = &wb->IXACT3WaveBank_iface;
-
-    EnterCriticalSection(&This->wb_wrapper_lookup_cs);
-
-    ret = wine_rb_put(&This->wb_wrapper_lookup, lookup->fact, &lookup->entry);
-
-    LeaveCriticalSection(&This->wb_wrapper_lookup_cs);
-
-    if (ret)
-    {
-        WARN("wrapper_lookup already present in the tree??\n");
-        HeapFree(GetProcessHeap(), 0, lookup);
     }
 
     wb->IXACT3WaveBank_iface.lpVtbl = &XACT3WaveBank_Vtbl;
@@ -1158,11 +1255,11 @@ static HRESULT WINAPI IXACT3EngineImpl_CreateStreamingWaveBank(IXACT3Engine *ifa
 {
     XACT3EngineImpl *This = impl_from_IXACT3Engine(iface);
     FACTStreamingParameters fakeParms;
-    struct wrapper_lookup *lookup;
     wrap_readfile_struct *fake;
     XACT3WaveBankImpl *wb;
     FACTWaveBank *fwb;
     UINT ret;
+    HRESULT hr;
 
     TRACE("(%p)->(%p, %p)\n", This, pParms, ppWaveBank);
 
@@ -1192,27 +1289,13 @@ static HRESULT WINAPI IXACT3EngineImpl_CreateStreamingWaveBank(IXACT3Engine *ifa
         return E_OUTOFMEMORY;
     }
 
-    lookup = HeapAlloc(GetProcessHeap(), 0, sizeof(*lookup));
-    if (!lookup)
+    hr = wrapper_add_entry(This, fwb, &wb->IXACT3WaveBank_iface);
+    if (FAILED(hr))
     {
         FACTWaveBank_Destroy(fwb);
         HeapFree(GetProcessHeap(), 0, wb);
         ERR("Failed to allocate wrapper_lookup!\n");
         return E_OUTOFMEMORY;
-    }
-    lookup->fact = fwb;
-    lookup->xact = &wb->IXACT3WaveBank_iface;
-
-    EnterCriticalSection(&This->wb_wrapper_lookup_cs);
-
-    ret = wine_rb_put(&This->wb_wrapper_lookup, lookup->fact, &lookup->entry);
-
-    LeaveCriticalSection(&This->wb_wrapper_lookup_cs);
-
-    if (ret)
-    {
-        WARN("wrapper_lookup already present in the tree??\n");
-        HeapFree(GetProcessHeap(), 0, lookup);
     }
 
     wb->IXACT3WaveBank_iface.lpVtbl = &XACT3WaveBank_Vtbl;
@@ -1233,8 +1316,54 @@ static HRESULT WINAPI IXACT3EngineImpl_PrepareInMemoryWave(IXACT3Engine *iface,
         IXACT3Wave **ppWave)
 {
     XACT3EngineImpl *This = impl_from_IXACT3Engine(iface);
-    FIXME("(%p): stub!\n", This);
-    return E_NOTIMPL;
+    XACT3WaveImpl *wave;
+    FACTWave *fwave = NULL;
+    FACTWaveBankEntry fact_wavebank;
+    UINT ret;
+    HRESULT hr;
+
+    TRACE("(%p)->(0x%08lx, %p, %p, %p, %ld, %d, %p)\n", This, dwFlags, &entry, pdwSeekTable,
+          pbWaveData, dwPlayOffset, nLoopCount, ppWave);
+
+    fact_wavebank.dwFlagsAndDuration = entry.dwFlagsAndDuration;
+    fact_wavebank.Format.dwValue = entry.Format.dwValue;
+    fact_wavebank.PlayRegion.dwOffset = entry.PlayRegion.dwOffset;
+    fact_wavebank.PlayRegion.dwLength = entry.PlayRegion.dwLength;
+    fact_wavebank.LoopRegion.dwStartSample = entry.LoopRegion.dwStartSample;
+    fact_wavebank.LoopRegion.dwTotalSamples = entry.LoopRegion.dwTotalSamples;
+
+    ret = FACTAudioEngine_PrepareInMemoryWave(This->fact_engine, dwFlags, fact_wavebank,
+            (uint32_t *)pdwSeekTable, pbWaveData, dwPlayOffset, nLoopCount, &fwave);
+    if(ret != 0 || !fwave)
+    {
+        ERR("Failed to CreateWave: %d (%p)\n", ret, fwave);
+        return E_FAIL;
+    }
+
+    wave = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*wave));
+    if (!wave)
+    {
+        FACTWave_Destroy(fwave);
+        ERR("Failed to allocate XACT3WaveImpl!");
+        return E_OUTOFMEMORY;
+    }
+
+    hr = wrapper_add_entry(This, fwave, &wave->IXACT3Wave_iface);
+    if (FAILED(hr))
+    {
+        FACTWave_Destroy(fwave);
+        HeapFree(GetProcessHeap(), 0, wave);
+        ERR("Failed to allocate wrapper_lookup!\n");
+        return E_OUTOFMEMORY;
+    }
+
+    wave->IXACT3Wave_iface.lpVtbl = &XACT3Wave_Vtbl;
+    wave->fact_wave = fwave;
+    *ppWave = &wave->IXACT3Wave_iface;
+
+    TRACE("Created Wave: %p\n", wave);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI IXACT3EngineImpl_PrepareStreamingWave(IXACT3Engine *iface,
@@ -1244,8 +1373,69 @@ static HRESULT WINAPI IXACT3EngineImpl_PrepareStreamingWave(IXACT3Engine *iface,
         IXACT3Wave **ppWave)
 {
     XACT3EngineImpl *This = impl_from_IXACT3Engine(iface);
-    FIXME("(%p): stub!\n", This);
-    return E_NOTIMPL;
+    XACT3WaveImpl *wave;
+    FACTWave *fwave = NULL;
+    FACTStreamingParameters fakeParms;
+    wrap_readfile_struct *fake;
+    FACTWaveBankEntry fact_wavebank;
+    UINT ret;
+    HRESULT hr;
+
+    TRACE("(%p)->(0x%08lx, %p, %p, %ld, %p, %ld, %d, %p)\n", This, dwFlags, &entry, &streamingParams,
+            dwAlignment, pdwSeekTable, dwPlayOffset, nLoopCount, ppWave);
+
+    fake = (wrap_readfile_struct*) CoTaskMemAlloc(
+            sizeof(wrap_readfile_struct));
+    fake->engine = This;
+    fake->file = streamingParams.file;
+    fakeParms.file = fake;
+    fakeParms.flags = streamingParams.flags;
+    fakeParms.offset = streamingParams.offset;
+    fakeParms.packetSize = streamingParams.packetSize;
+
+    fact_wavebank.dwFlagsAndDuration = entry.dwFlagsAndDuration;
+    fact_wavebank.Format.dwValue = entry.Format.dwValue;
+    fact_wavebank.PlayRegion.dwOffset = entry.PlayRegion.dwOffset;
+    fact_wavebank.PlayRegion.dwLength = entry.PlayRegion.dwLength;
+    fact_wavebank.LoopRegion.dwStartSample = entry.LoopRegion.dwStartSample;
+    fact_wavebank.LoopRegion.dwTotalSamples = entry.LoopRegion.dwTotalSamples;
+
+    /* FAudio Prototype is incorrect and shouldn't take a buffer as an parameter,
+     *   passing through NULL to ensure it's not used.
+     */
+    ret = FACTAudioEngine_PrepareStreamingWave(This->fact_engine, dwFlags, fact_wavebank, fakeParms,
+            dwAlignment, (uint32_t *)pdwSeekTable, NULL, dwPlayOffset, nLoopCount, &fwave);
+
+    if(ret != 0 || !fwave)
+    {
+        ERR("Failed to CreateWave: %d (%p)\n", ret, fwave);
+        return E_FAIL;
+    }
+
+    wave = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*wave));
+    if (!wave)
+    {
+        FACTWave_Destroy(fwave);
+        ERR("Failed to allocate XACT3WaveImpl!");
+        return E_OUTOFMEMORY;
+    }
+
+    hr = wrapper_add_entry(This, fwave, &wave->IXACT3Wave_iface);
+    if (FAILED(hr))
+    {
+        FACTWave_Destroy(fwave);
+        HeapFree(GetProcessHeap(), 0, wave);
+        ERR("Failed to allocate wrapper_lookup!\n");
+        return E_OUTOFMEMORY;
+    }
+
+    wave->IXACT3Wave_iface.lpVtbl = &XACT3Wave_Vtbl;
+    wave->fact_wave = fwave;
+    *ppWave = &wave->IXACT3Wave_iface;
+
+    TRACE("Created Wave: %p\n", wave);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI IXACT3EngineImpl_PrepareWave(IXACT3Engine *iface,
@@ -1257,6 +1447,7 @@ static HRESULT WINAPI IXACT3EngineImpl_PrepareWave(IXACT3Engine *iface,
     XACT3WaveImpl *wave;
     FACTWave *fwave = NULL;
     UINT ret;
+    HRESULT hr;
 
     TRACE("(%p)->(0x%08lx, %s, %d, %ld, %ld, %d, %p)\n", This, dwFlags, debugstr_a(szWavePath),
           wStreamingPacketSize, dwAlignment, dwPlayOffset, nLoopCount, ppWave);
@@ -1273,6 +1464,15 @@ static HRESULT WINAPI IXACT3EngineImpl_PrepareWave(IXACT3Engine *iface,
     if (!wave)
     {
         FACTWave_Destroy(fwave);
+        return E_OUTOFMEMORY;
+    }
+
+    hr = wrapper_add_entry(This, fwave, &wave->IXACT3Wave_iface);
+    if (FAILED(hr))
+    {
+        FACTWave_Destroy(fwave);
+        HeapFree(GetProcessHeap(), 0, wave);
+        ERR("Failed to allocate wrapper_lookup!\n");
         return E_OUTOFMEMORY;
     }
 
@@ -1420,12 +1620,8 @@ static HRESULT WINAPI IXACT3EngineImpl_RegisterNotification(IXACT3Engine *iface,
 
     TRACE("(%p)->(%p)\n", This, pNotificationDesc);
 
-    if (pNotificationDesc->type == XACTNOTIFICATIONTYPE_WAVEBANKPREPARED)
-        This->wb_prepared_context = pNotificationDesc->pvContext;
-    else if (pNotificationDesc->type == XACTNOTIFICATIONTYPE_WAVEBANKDESTROYED)
-        This->wb_destroyed_context = pNotificationDesc->pvContext;
-
     unwrap_notificationdesc(&fdesc, pNotificationDesc);
+    This->contexts[pNotificationDesc->type - 1] = pNotificationDesc->pvContext;
     fdesc.pvContext = This;
     return FACTAudioEngine_RegisterNotification(This->fact_engine, &fdesc);
 }
@@ -1439,6 +1635,7 @@ static HRESULT WINAPI IXACT3EngineImpl_UnRegisterNotification(IXACT3Engine *ifac
     TRACE("(%p)->(%p)\n", This, pNotificationDesc);
 
     unwrap_notificationdesc(&fdesc, pNotificationDesc);
+    This->contexts[pNotificationDesc->type - 1] = pNotificationDesc->pvContext;
     fdesc.pvContext = This;
     return FACTAudioEngine_UnRegisterNotification(This->fact_engine, &fdesc);
 }
