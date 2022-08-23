@@ -2523,7 +2523,9 @@ HRESULT CDECL wined3d_get_device_caps(const struct wined3d_adapter *adapter,
     caps->MaxUserClipPlanes                = vertex_caps.max_user_clip_planes;
     caps->MaxActiveLights                  = vertex_caps.max_active_lights;
     caps->MaxVertexBlendMatrices           = vertex_caps.max_vertex_blend_matrices;
-    caps->MaxVertexBlendMatrixIndex        = vertex_caps.max_vertex_blend_matrix_index;
+    caps->MaxVertexBlendMatrixIndex = caps->DeviceType == WINED3D_DEVICE_TYPE_HAL ? 0
+            : vertex_caps.max_vertex_blend_matrix_index;
+
     caps->VertexProcessingCaps             = vertex_caps.vertex_processing_caps;
     caps->FVFCaps                          = vertex_caps.fvf_caps;
     caps->RasterCaps                      |= vertex_caps.raster_caps;
@@ -2686,8 +2688,7 @@ HRESULT CDECL wined3d_get_device_caps(const struct wined3d_adapter *adapter,
     caps->ddraw_caps.ssb_color_key_caps = ckey_caps;
     caps->ddraw_caps.ssb_fx_caps = fx_caps;
 
-    caps->ddraw_caps.dds_caps = WINEDDSCAPS_FLIP
-            | WINEDDSCAPS_OFFSCREENPLAIN
+    caps->ddraw_caps.dds_caps = WINEDDSCAPS_OFFSCREENPLAIN
             | WINEDDSCAPS_PALETTE
             | WINEDDSCAPS_PRIMARYSURFACE
             | WINEDDSCAPS_TEXTURE
@@ -3409,21 +3410,11 @@ static struct wined3d_adapter *wined3d_adapter_no3d_create(unsigned int ordinal,
 
 static BOOL wined3d_adapter_create_output(struct wined3d_adapter *adapter, const WCHAR *output_name)
 {
-    struct wined3d_output *outputs;
     HRESULT hr;
 
-    if (!adapter->outputs && !(adapter->outputs = heap_calloc(1, sizeof(*adapter->outputs))))
-    {
+    if (!wined3d_array_reserve((void **)&adapter->outputs, &adapter->outputs_size,
+            adapter->output_count + 1, sizeof(*adapter->outputs)))
         return FALSE;
-    }
-    else
-    {
-        if (!(outputs = heap_realloc(adapter->outputs,
-                sizeof(*adapter->outputs) * (adapter->output_count + 1))))
-            return FALSE;
-
-        adapter->outputs = outputs;
-    }
 
     if (FAILED(hr = wined3d_output_init(&adapter->outputs[adapter->output_count],
             adapter->output_count, adapter, output_name)))

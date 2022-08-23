@@ -833,6 +833,10 @@ static BOOL nulldrv_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update )
                         hdc, rect.left - dx, rect.top - dy, SRCCOPY, 0, 0 );
 }
 
+static void nulldrv_SetActiveWindow( HWND hwnd )
+{
+}
+
 static void nulldrv_SetCapture( HWND hwnd, UINT flags )
 {
 }
@@ -913,6 +917,11 @@ static const struct vulkan_funcs *nulldrv_wine_get_vulkan_driver( UINT version )
 static struct opengl_funcs *nulldrv_wine_get_wgl_driver( UINT version )
 {
     return (void *)-1;
+}
+
+static void nulldrv_UpdateCandidatePos( HWND hwnd, const RECT *caret_rect )
+{
+
 }
 
 static void nulldrv_ThreadDetach( void )
@@ -1201,6 +1210,7 @@ static const struct user_driver_funcs lazy_load_driver =
     nulldrv_MsgWaitForMultipleObjectsEx,
     nulldrv_ReleaseDC,
     nulldrv_ScrollDC,
+    nulldrv_SetActiveWindow,
     nulldrv_SetCapture,
     nulldrv_SetFocus,
     loaderdrv_SetLayeredWindowAttributes,
@@ -1221,6 +1231,7 @@ static const struct user_driver_funcs lazy_load_driver =
     loaderdrv_wine_get_vulkan_driver,
     /* opengl support */
     nulldrv_wine_get_wgl_driver,
+    nulldrv_UpdateCandidatePos,
     /* thread management */
     nulldrv_ThreadDetach,
 };
@@ -1276,6 +1287,7 @@ void __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT version
     SET_USER_FUNC(MsgWaitForMultipleObjectsEx);
     SET_USER_FUNC(ReleaseDC);
     SET_USER_FUNC(ScrollDC);
+    SET_USER_FUNC(SetActiveWindow);
     SET_USER_FUNC(SetCapture);
     SET_USER_FUNC(SetFocus);
     SET_USER_FUNC(SetLayeredWindowAttributes);
@@ -1293,6 +1305,7 @@ void __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT version
     SET_USER_FUNC(SystemParametersInfo);
     SET_USER_FUNC(wine_get_vulkan_driver);
     SET_USER_FUNC(wine_get_wgl_driver);
+    SET_USER_FUNC(UpdateCandidatePos);
     SET_USER_FUNC(ThreadDetach);
 #undef SET_USER_FUNC
 

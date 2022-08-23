@@ -502,6 +502,15 @@ HKL WINAPI LoadKeyboardLayoutA(LPCSTR pwszKLID, UINT Flags)
     return ret;
 }
 
+/***********************************************************************
+ *              LoadKeyboardLayoutEx (USER32.@)
+ */
+HKL WINAPI LoadKeyboardLayoutEx(DWORD unknown, const WCHAR *locale, UINT flags)
+{
+    FIXME("(%d, %s, %x) semi-stub!\n", unknown, debugstr_w(locale), flags);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return LoadKeyboardLayoutW(locale, flags);
+}
 
 /***********************************************************************
  *		UnloadKeyboardLayout (USER32.@)
@@ -512,7 +521,6 @@ BOOL WINAPI UnloadKeyboardLayout( HKL layout )
     SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
 }
-
 
 /***********************************************************************
  *		EnableMouseInPointer (USER32.@)

@@ -89,6 +89,8 @@
 #include "winioctl.h"
 #include "winternl.h"
 #include "unix_private.h"
+#include "esync.h"
+#include "fsync.h"
 #include "wine/list.h"
 #include "wine/debug.h"
 
@@ -354,6 +356,7 @@ static void * const syscalls[] =
     NtWriteVirtualMemory,
     NtYieldExecution,
     __wine_dbg_write,
+    __wine_needs_override_large_address_aware,
     __wine_unix_call,
     __wine_unix_spawnvp,
     wine_nt_to_unix_file_name,
@@ -2145,6 +2148,33 @@ static struct unix_funcs unix_funcs =
 #endif
 };
 
+BOOL ac_odyssey;
+BOOL fsync_simulate_sched_quantum;
+
+static void hacks_init(void)
+{
+    static const char upc_exe[] = "Ubisoft Game Launcher\\upc.exe";
+    static const char ac_odyssey_exe[] = "ACOdyssey.exe";
+    const char *env_str;
+
+    if (main_argc > 1 && strstr(main_argv[1], ac_odyssey_exe))
+    {
+        ERR("HACK: AC Odyssey sync tweak on.\n");
+        ac_odyssey = TRUE;
+        return;
+    }
+    env_str = getenv("WINE_FSYNC_SIMULATE_SCHED_QUANTUM");
+    if (env_str)
+        fsync_simulate_sched_quantum = !!atoi(env_str);
+    else if (main_argc > 1)
+        fsync_simulate_sched_quantum = !!strstr(main_argv[1], upc_exe);
+    if (fsync_simulate_sched_quantum)
+        ERR("HACK: Simulating sched quantum in fsync.\n");
+
+    env_str = getenv("SteamGameId");
+    if (env_str && !strcmp(env_str, "50130"))
+        setenv("WINESTEAMNOEXEC", "1", 0);
+}
 
 /***********************************************************************
  *           start_main_thread
@@ -2160,6 +2190,9 @@ static void start_main_thread(void)
     signal_init_thread( teb );
     dbg_init();
     startup_info_size = server_init_process();
+    hacks_init();
+    fsync_init();
+    esync_init();
     virtual_map_user_shared_data();
     init_cpu_info();
     init_files();
@@ -2502,6 +2535,8 @@ void __wine_main( int argc, char *argv[], char *envp[] )
 #endif
 
     virtual_init();
+    signal_init_early();
+
     init_environment( argc, argv, envp );
 
 #ifdef __APPLE__
