@@ -513,6 +513,7 @@ BOOL WINAPI UnloadKeyboardLayout( HKL layout )
     return FALSE;
 }
 
+
 /***********************************************************************
  *		EnableMouseInPointer (USER32.@)
  */
