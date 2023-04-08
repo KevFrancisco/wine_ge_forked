@@ -93,6 +93,8 @@ static inline HANDLE HEAP_CreateSystemHeap(void)
 
 extern BOOL CDECL __wine_needs_override_large_address_aware(void);
 
+extern BOOL CDECL __wine_needs_override_large_address_aware(void);
+
 
 /***********************************************************************
  *           HeapCreate   (KERNEL32.@)
@@ -546,6 +548,10 @@ VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
         if (lpBuffer->dwAvailPageFile > MAXLONG) lpBuffer->dwAvailPageFile = MAXLONG;
     }
 #endif
+    static int force_large_address_aware = -1;
+
+    if (force_large_address_aware == -1)
+        force_large_address_aware = __wine_needs_override_large_address_aware();
 
     TRACE("Length %lu, MemoryLoad %lu, TotalPhys %Ix, AvailPhys %Ix,"
           " TotalPageFile %Ix, AvailPageFile %Ix, TotalVirtual %Ix, AvailVirtual %Ix\n",

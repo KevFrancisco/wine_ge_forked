@@ -2030,6 +2030,8 @@ NTSTATUS WINAPI RtlQueryHeapInformation( HANDLE handle, HEAP_INFORMATION_CLASS i
         FIXME( "HEAP_INFORMATION_CLASS %u not implemented!\n", info_class );
         return STATUS_INVALID_INFO_CLASS;
     }
+
+    HEAP_lfh_set_debug_flags( flags );
 }
 
 /***********************************************************************
@@ -2153,6 +2155,11 @@ BOOLEAN WINAPI RtlSetUserFlagsHeap( HANDLE handle, ULONG flags, void *ptr, ULONG
 {
     FIXME( "handle %p, flags %#x, ptr %p, clear %#x, set %#x stub!\n", handle, flags, ptr, clear, set );
     return FALSE;
+}
+
+void HEAP_notify_thread_destroy( BOOLEAN last )
+{
+    HEAP_lfh_notify_thread_destroy( last );
 }
 
 void HEAP_notify_thread_destroy( BOOLEAN last )

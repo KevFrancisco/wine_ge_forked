@@ -309,6 +309,18 @@ void resize_vk_surfaces(HWND hwnd, Window active, int mask, XWindowChanges *chan
     pthread_mutex_unlock(&vulkan_mutex);
 }
 
+void resize_vk_surfaces(HWND hwnd, Window active, int mask, XWindowChanges *changes)
+{
+    struct wine_vk_surface *surface;
+    EnterCriticalSection(&context_section);
+    LIST_FOR_EACH_ENTRY(surface, &surface_list, struct wine_vk_surface, entry)
+    {
+        if (surface->hwnd != hwnd) continue;
+        if (surface->window != active) XConfigureWindow(gdi_display, surface->window, mask, changes);
+    }
+    LeaveCriticalSection(&context_section);
+}
+
 void sync_vk_surface(HWND hwnd, BOOL known_child)
 {
     struct wine_vk_surface *surface;
@@ -354,6 +366,24 @@ Window wine_vk_active_surface(HWND hwnd)
         window = active->window;
     }
     pthread_mutex_unlock(&vulkan_mutex);
+
+    return window;
+}
+
+Window wine_vk_active_surface( HWND hwnd )
+{
+    struct wine_vk_surface *surface, *active = NULL;
+    Window window;
+
+    EnterCriticalSection(&context_section);
+    LIST_FOR_EACH_ENTRY(surface, &surface_list, struct wine_vk_surface, entry)
+    {
+        if (surface->hwnd != hwnd) continue;
+        active = surface;
+    }
+    if (!active) window = None;
+    else window = active->window;
+    LeaveCriticalSection(&context_section);
 
     return window;
 }
@@ -685,6 +715,7 @@ static VkResult X11DRV_vkGetDeviceGroupSurfacePresentModesKHR(VkDevice device,
         VkSurfaceKHR surface, VkDeviceGroupPresentModeFlagsKHR *flags)
 {
     struct wine_vk_surface *x11_surface = surface_from_handle(surface);
+    HWND hwnd = x11_surface->hwnd;
 
     TRACE("%p, 0x%s, %p\n", device, wine_dbgstr_longlong(surface), flags);
 

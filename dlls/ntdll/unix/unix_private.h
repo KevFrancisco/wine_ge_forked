@@ -150,6 +150,8 @@ extern struct ldt_copy __wine_ldt_copy DECLSPEC_HIDDEN;
 extern BOOL ac_odyssey DECLSPEC_HIDDEN;
 extern BOOL fsync_simulate_sched_quantum DECLSPEC_HIDDEN;
 
+extern BOOL ac_odyssey DECLSPEC_HIDDEN;
+
 extern void init_environment( int argc, char *argv[], char *envp[] ) DECLSPEC_HIDDEN;
 extern void init_startup_info(void) DECLSPEC_HIDDEN;
 extern void *create_startup_info( const UNICODE_STRING *nt_image, const RTL_USER_PROCESS_PARAMETERS *params,
@@ -469,6 +471,8 @@ static inline NTSTATUS map_section( HANDLE mapping, void **ptr, SIZE_T *size, UL
     return NtMapViewOfSection( mapping, NtCurrentProcess(), ptr, is_win64 && wow_peb ? 0x7fffffff : 0,
                                0, NULL, size, ViewShare, 0, protect );
 }
+
+BOOL CDECL __wine_needs_override_large_address_aware(void);
 
 BOOL CDECL __wine_needs_override_large_address_aware(void);
 
