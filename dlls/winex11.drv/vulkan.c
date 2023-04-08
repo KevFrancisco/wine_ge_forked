@@ -360,6 +360,24 @@ Window wine_vk_active_surface(HWND hwnd)
     return window;
 }
 
+Window wine_vk_active_surface( HWND hwnd )
+{
+    struct wine_vk_surface *surface, *active = NULL;
+    Window window;
+
+    EnterCriticalSection(&context_section);
+    LIST_FOR_EACH_ENTRY(surface, &surface_list, struct wine_vk_surface, entry)
+    {
+        if (surface->hwnd != hwnd) continue;
+        active = surface;
+    }
+    if (!active) window = None;
+    else window = active->window;
+    LeaveCriticalSection(&context_section);
+
+    return window;
+}
+
 void vulkan_thread_detach(void)
 {
     struct wine_vk_surface *surface, *next;
@@ -686,6 +704,7 @@ static VkResult X11DRV_vkGetDeviceGroupSurfacePresentModesKHR(VkDevice device,
         VkSurfaceKHR surface, VkDeviceGroupPresentModeFlagsKHR *flags)
 {
     struct wine_vk_surface *x11_surface = surface_from_handle(surface);
+    HWND hwnd = x11_surface->hwnd;
 
     TRACE("%p, 0x%s, %p\n", device, wine_dbgstr_longlong(surface), flags);
 

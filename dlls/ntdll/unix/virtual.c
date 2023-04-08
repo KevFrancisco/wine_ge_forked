@@ -113,6 +113,8 @@ struct file_view
 
 #define SYMBOLIC_LINK_QUERY 0x0001
 
+#define SYMBOLIC_LINK_QUERY 0x0001
+
 /* per-page protection flags */
 #define VPROT_READ       0x01
 #define VPROT_WRITE      0x02
@@ -3444,6 +3446,19 @@ NTSTATUS virtual_handle_fault( void *addr, DWORD err, void *stack )
     }
     mutex_unlock( &virtual_mutex );
     return ret;
+}
+
+BOOL CDECL __wine_needs_override_large_address_aware(void)
+{
+    static int needs_override = -1;
+
+    if (needs_override == -1)
+    {
+        const char *str = getenv( "WINE_LARGE_ADDRESS_AWARE" );
+
+        needs_override = !str || atoi(str) == 1;
+    }
+    return needs_override;
 }
 
 BOOL CDECL __wine_needs_override_large_address_aware(void)
