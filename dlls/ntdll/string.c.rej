@@ -1,0 +1,46 @@
+--- dlls/ntdll/string.c
++++ dlls/ntdll/string.c
+@@ -226,20 +350,7 @@ int __cdecl memcmp( const void *ptr1, const void *ptr2, size_t n )
+  */
+ void * __cdecl memcpy( void *dst, const void *src, size_t n )
+ {
+-    volatile unsigned char *d = dst;  /* avoid gcc optimizations */
+-    const unsigned char *s = src;
+-
+-    if ((size_t)dst - (size_t)src >= n)
+-    {
+-        while (n--) *d++ = *s++;
+-    }
+-    else
+-    {
+-        d += n - 1;
+-        s += n - 1;
+-        while (n--) *d-- = *s--;
+-    }
+-    return dst;
++    return memmove_c( dst, src, n );
+ }
+ 
+ 
+@@ -248,20 +359,7 @@ void * __cdecl memcpy( void *dst, const void *src, size_t n )
+  */
+ void * __cdecl memmove( void *dst, const void *src, size_t n )
+ {
+-    volatile unsigned char *d = dst;  /* avoid gcc optimizations */
+-    const unsigned char *s = src;
+-
+-    if ((size_t)dst - (size_t)src >= n)
+-    {
+-        while (n--) *d++ = *s++;
+-    }
+-    else
+-    {
+-        d += n - 1;
+-        s += n - 1;
+-        while (n--) *d-- = *s--;
+-    }
+-    return dst;
++    return memmove_c( dst, src, n );
+ }
+ 
+ 
