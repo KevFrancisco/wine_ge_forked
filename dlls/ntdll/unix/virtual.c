@@ -115,6 +115,8 @@ struct file_view
 
 #define SYMBOLIC_LINK_QUERY 0x0001
 
+#define SYMBOLIC_LINK_QUERY 0x0001
+
 /* per-page protection flags */
 #define VPROT_READ       0x01
 #define VPROT_WRITE      0x02
@@ -3375,6 +3377,19 @@ static NTSTATUS grow_thread_stack( char *page, struct thread_stack_info *stack_i
     }
     else NtCurrentTeb()->Tib.StackLimit = page;
     return ret;
+}
+
+BOOL CDECL __wine_needs_override_large_address_aware(void)
+{
+    static int needs_override = -1;
+
+    if (needs_override == -1)
+    {
+        const char *str = getenv( "WINE_LARGE_ADDRESS_AWARE" );
+
+        needs_override = !str || atoi(str) == 1;
+    }
+    return needs_override;
 }
 
 

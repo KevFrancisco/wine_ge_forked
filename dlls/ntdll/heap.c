@@ -2353,3 +2353,7 @@ void HEAP_notify_thread_destroy( BOOLEAN last )
 void HEAP_notify_thread_destroy( BOOLEAN last )
 {
 }
+
+void HEAP_notify_thread_destroy( BOOLEAN last )
+{
+}

@@ -456,4 +456,6 @@ BOOL CDECL __wine_needs_override_large_address_aware(void);
 
 BOOL CDECL __wine_needs_override_large_address_aware(void);
 
+BOOL CDECL __wine_needs_override_large_address_aware(void);
+
 #endif /* __NTDLL_UNIX_PRIVATE_H */
