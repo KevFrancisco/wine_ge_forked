@@ -1506,6 +1506,22 @@ void update_client_window( HWND hwnd )
 
 
 /**********************************************************************
+ *		update_client_window
+ */
+void update_client_window( HWND hwnd )
+{
+    struct x11drv_win_data *data;
+    if ((data = get_win_data( hwnd )))
+    {
+        data->client_window = wine_vk_active_surface( hwnd );
+        /* make sure any request that could use old client window has been flushed */
+        XFlush( data->display );
+        release_win_data( data );
+    }
+}
+
+
+/**********************************************************************
  *		create_dummy_client_window
  */
 Window create_dummy_client_window(void)
@@ -1852,6 +1868,10 @@ BOOL create_desktop_win_data( Window win )
     struct x11drv_thread_data *thread_data = x11drv_thread_data();
     Display *display = thread_data->display;
     struct x11drv_win_data *data;
+    HWND parent = GetAncestor( hwnd, GA_PARENT );
+
+    if (!GetWindow( parent, GW_CHILD ) && GetAncestor( parent, GA_PARENT ) == GetDesktopWindow())
+        sync_vk_surface( parent, FALSE );
 
     if (!(data = alloc_win_data( display, NtUserGetDesktopWindow() ))) return FALSE;
     data->whole_window = win;

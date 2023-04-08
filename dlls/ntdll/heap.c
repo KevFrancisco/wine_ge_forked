@@ -1357,6 +1357,8 @@ static void heap_set_debug_flags( HANDLE handle )
                                               MAX_FREE_PENDING * sizeof(*heap->pending_free) );
         heap->pending_pos = 0;
     }
+
+    HEAP_lfh_set_debug_flags( flags );
 }
 
 
@@ -1977,6 +1979,13 @@ ULONG WINAPI RtlGetProcessHeaps( ULONG count, HANDLE *heaps )
 NTSTATUS WINAPI RtlQueryHeapInformation( HANDLE handle, HEAP_INFORMATION_CLASS info_class,
                                          void *info, SIZE_T size_in, PSIZE_T size_out )
 {
+    HEAP *heapPtr;
+
+    TRACE("%p %d %p %ld\n", heap, info_class, info, size_in);
+
+    if (!(heapPtr = HEAP_GetPtr( heap )))
+        return STATUS_INVALID_PARAMETER;
+
     switch (info_class)
     {
     case HeapCompatibilityInformation:
@@ -1985,7 +1994,7 @@ NTSTATUS WINAPI RtlQueryHeapInformation( HANDLE handle, HEAP_INFORMATION_CLASS i
         if (size_in < sizeof(ULONG))
             return STATUS_BUFFER_TOO_SMALL;
 
-        *(ULONG *)info = 0; /* standard heap */
+        *(ULONG *)info = heapPtr->extended_type;
         return STATUS_SUCCESS;
 
     default:
@@ -2078,4 +2087,9 @@ BOOLEAN WINAPI RtlSetUserFlagsHeap( HANDLE handle, ULONG flags, void *ptr, ULONG
 {
     FIXME( "handle %p, flags %#x, ptr %p, clear %#x, set %#x stub!\n", handle, flags, ptr, clear, set );
     return FALSE;
+}
+
+void HEAP_notify_thread_destroy( BOOLEAN last )
+{
+    HEAP_lfh_notify_thread_destroy( last );
 }

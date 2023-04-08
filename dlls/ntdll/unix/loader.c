@@ -1796,6 +1796,26 @@ static NTSTATUS open_main_image( WCHAR *image, void **module, SECTION_IMAGE_INFO
     return status;
 }
 
+BOOL ac_odyssey;
+
+static void hacks_init(void)
+{
+    static const char ac_odyssey_exe[] = "ACOdyssey.exe";
+    char cur_exe[MAX_PATH];
+    DWORD cur_exe_len;
+    int fd;
+
+    fd = open("/proc/self/comm", O_RDONLY);
+    cur_exe_len = read(fd, cur_exe, sizeof(cur_exe));
+    close(fd);
+    cur_exe[cur_exe_len - 1] = 0;
+
+    if (!strcasecmp(cur_exe, ac_odyssey_exe))
+    {
+        ERR("HACK: AC Odyssey sync tweak on.\n");
+        ac_odyssey = TRUE;
+    }
+}
 
 /***********************************************************************
  *           load_main_exe

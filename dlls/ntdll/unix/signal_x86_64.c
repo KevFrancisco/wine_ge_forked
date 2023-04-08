@@ -2415,8 +2415,17 @@ NTSTATUS WINAPI KeUserModeCallback( ULONG id, const void *args, ULONG len, void 
     {
         struct syscall_frame *frame = amd64_thread_data()->syscall_frame;
         void *args_data = (void *)((frame->rsp - len) & ~15);
+        struct {
+            void *args;
+            ULONG id;
+            ULONG len;
+        } *params = (void *)((ULONG_PTR)args_data - 0x18);
+
 
         memcpy( args_data, args, len );
+        params->args = args_data;
+        params->id = id;
+        params->len = len;
 
         callback_frame.frame.rcx           = id;
         callback_frame.frame.rdx           = (ULONG_PTR)args;
@@ -2425,7 +2434,7 @@ NTSTATUS WINAPI KeUserModeCallback( ULONG id, const void *args, ULONG len, void 
         callback_frame.frame.fs            = amd64_thread_data()->fs;
         callback_frame.frame.gs            = ds64_sel;
         callback_frame.frame.ss            = ds64_sel;
-        callback_frame.frame.rsp           = (ULONG_PTR)args_data - 0x28;
+        callback_frame.frame.rsp           = (ULONG_PTR)params - 0x28;
         callback_frame.frame.rip           = (ULONG_PTR)pKiUserCallbackDispatcher;
         callback_frame.frame.eflags        = 0x200;
         callback_frame.frame.restore_flags = CONTEXT_CONTROL | CONTEXT_INTEGER;

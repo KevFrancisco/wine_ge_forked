@@ -63,6 +63,7 @@ struct ntdll_thread_data
     PRTL_THREAD_START_ROUTINE start;  /* thread entry point */
     void              *param;         /* thread entry point parameter */
     void              *jmp_buf;       /* setjmp buffer for exception handling */
+    void              *heap;          /* thread local heap data */
 };
 
 C_ASSERT( sizeof(struct ntdll_thread_data) <= sizeof(((TEB *)0)->GdiTebBatch) );
@@ -148,6 +149,8 @@ extern struct ldt_copy __wine_ldt_copy DECLSPEC_HIDDEN;
 
 extern BOOL ac_odyssey DECLSPEC_HIDDEN;
 extern BOOL fsync_simulate_sched_quantum DECLSPEC_HIDDEN;
+
+extern BOOL ac_odyssey DECLSPEC_HIDDEN;
 
 extern void init_environment( int argc, char *argv[], char *envp[] ) DECLSPEC_HIDDEN;
 extern void init_startup_info(void) DECLSPEC_HIDDEN;
@@ -468,6 +471,8 @@ static inline NTSTATUS map_section( HANDLE mapping, void **ptr, SIZE_T *size, UL
     return NtMapViewOfSection( mapping, NtCurrentProcess(), ptr, is_win64 && wow_peb ? 0x7fffffff : 0,
                                0, NULL, size, ViewShare, 0, protect );
 }
+
+BOOL CDECL __wine_needs_override_large_address_aware(void);
 
 BOOL CDECL __wine_needs_override_large_address_aware(void);
 
