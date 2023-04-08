@@ -655,13 +655,22 @@ __ASM_GLOBAL_FUNC( KiUserApcDispatcher,
  *
  * FIXME: not binary compatible
  */
-void WINAPI KiUserCallbackDispatcher( ULONG id, void *args, ULONG len )
+void WINAPI user_callback_dispatcher( ULONG id, void *args, ULONG len )
 {
     NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
 
     RtlRaiseStatus( NtCallbackReturn( NULL, 0, func( args, len )));
 }
 
+__ASM_GLOBAL_FUNC( KiUserCallbackDispatcher,
+                  "movq 0x28(%rsp), %rdx\n\t"
+                  "movl 0x30(%rsp), %ecx\n\t"
+                  "movl 0x34(%rsp), %r8d\n\t"
+                  "andq $0xFFFFFFFFFFFFFFF0, %rsp\n\t"
+                  __ASM_SEH(".seh_endprologue\n\t")
+                  "call "
+                  __ASM_NAME("user_callback_dispatcher") "\n\t"
+                  "int3")
 
 static ULONG64 get_int_reg( CONTEXT *context, int reg )
 {

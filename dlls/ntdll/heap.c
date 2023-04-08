@@ -2364,3 +2364,7 @@ void HEAP_notify_thread_destroy( BOOLEAN last )
 {
     HEAP_lfh_notify_thread_destroy( last );
 }
+
+void HEAP_notify_thread_destroy( BOOLEAN last )
+{
+}

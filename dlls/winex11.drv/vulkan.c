@@ -49,7 +49,6 @@ WINE_DECLARE_DEBUG_CHANNEL(fps);
 
 static pthread_mutex_t vulkan_mutex;
 
-static XContext vulkan_hwnd_context;
 static XContext vulkan_swapchain_context;
 
 #define VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR 1000004000
@@ -63,7 +62,9 @@ struct wine_vk_surface
     Window window;
     VkSurfaceKHR surface; /* native surface */
     VkPresentModeKHR present_mode;
+    BOOL known_child; /* hwnd is or has a child */
     BOOL offscreen; /* drawable is offscreen */
+    LONG swapchain_count; /* surface can have one active an many retired swapchains */
     HDC hdc;
     HWND hwnd;
     DWORD hwnd_thread_id;
@@ -161,7 +162,6 @@ static void wine_vk_init(void)
 #undef LOAD_FUNCPTR
 #undef LOAD_OPTIONAL_FUNCPTR
 
-    vulkan_hwnd_context = XUniqueContext();
     vulkan_swapchain_context = XUniqueContext();
     return;
 
@@ -286,6 +286,18 @@ static BOOL wine_vk_surface_set_offscreen(struct wine_vk_surface *surface, BOOL 
     return !offscreen;
 }
 
+void resize_vk_surfaces(HWND hwnd, Window active, int mask, XWindowChanges *changes)
+{
+    struct wine_vk_surface *surface;
+    EnterCriticalSection(&context_section);
+    LIST_FOR_EACH_ENTRY(surface, &surface_list, struct wine_vk_surface, entry)
+    {
+        if (surface->hwnd != hwnd) continue;
+        if (surface->window != active) XConfigureWindow(gdi_display, surface->window, mask, changes);
+    }
+    LeaveCriticalSection(&context_section);
+}
+
 void sync_vk_surface(HWND hwnd, BOOL known_child)
 {
     struct wine_vk_surface *surface;
@@ -293,6 +305,32 @@ void sync_vk_surface(HWND hwnd, BOOL known_child)
     if (!XFindContext(gdi_display, (XID)hwnd, vulkan_hwnd_context, (char **)&surface))
         wine_vk_surface_set_offscreen(surface, known_child);
     pthread_mutex_unlock(&vulkan_mutex);
+}
+
+Window wine_vk_active_surface( HWND hwnd )
+{
+    struct wine_vk_surface *surface, *active = NULL;
+    DWORD surface_count = 0;
+    Window window;
+
+    EnterCriticalSection(&context_section);
+    LIST_FOR_EACH_ENTRY(surface, &surface_list, struct wine_vk_surface, entry)
+    {
+        if (surface->hwnd != hwnd) continue;
+        active = surface;
+        surface_count++;
+    }
+    if (!active) window = None;
+    else
+    {
+        TRACE("hwnd %p surface_count %u known_child %u\n", hwnd, surface_count, active->known_child);
+        if (surface_count > 1) wine_vk_surface_set_offscreen(active, TRUE);
+        else wine_vk_surface_set_offscreen(active, active->known_child);
+        window = active->window;
+    }
+    LeaveCriticalSection(&context_section);
+
+    return window;
 }
 
 void vulkan_thread_detach(void)
@@ -305,11 +343,7 @@ void vulkan_thread_detach(void)
     {
         if (surface->hwnd_thread_id != thread_id)
             continue;
-
-        TRACE("Detaching surface %p, hwnd %p.\n", surface, surface->hwnd);
-        XReparentWindow(gdi_display, surface->window, get_dummy_parent(), 0, 0);
-        XSync(gdi_display, False);
-        wine_vk_surface_destroy(surface->hwnd);
+        wine_vk_surface_destroy(surface);
     }
     pthread_mutex_unlock(&vulkan_mutex);
 }
@@ -335,6 +369,8 @@ static VkResult X11DRV_vkAcquireNextImageKHR(VkDevice device,
     pthread_mutex_unlock(&vulkan_mutex);
 
     if (!surface || !surface->offscreen)
+        wait_fence = FALSE;
+    else if (use_xpresent && use_xfixes && usexcomposite) /* X11DRV_PRESENT_DRAWABLE will use XPresentPixmap */
         wait_fence = FALSE;
     else if (surface->present_mode == VK_PRESENT_MODE_MAILBOX_KHR ||
              surface->present_mode == VK_PRESENT_MODE_FIFO_KHR)
@@ -406,7 +442,7 @@ static VkResult X11DRV_vkCreateSwapchainKHR(VkDevice device,
         const VkSwapchainCreateInfoKHR *create_info,
         const VkAllocationCallbacks *allocator, VkSwapchainKHR *swapchain)
 {
-    struct wine_vk_surface *x11_surface = surface_from_handle(create_info->surface);
+    struct wine_vk_surface *other, *x11_surface = surface_from_handle(create_info->surface);
     VkSwapchainCreateInfoKHR create_info_host;
     VkResult result;
 
@@ -421,8 +457,9 @@ static VkResult X11DRV_vkCreateSwapchainKHR(VkDevice device,
     create_info_host = *create_info;
     create_info_host.surface = x11_surface->surface;
 
-    /* force fifo when running offscreen so the acquire fence is more likely to be vsynced */
-    if (x11_surface->offscreen && create_info->presentMode == VK_PRESENT_MODE_MAILBOX_KHR)
+    /* unless we use XPresentPixmap, force fifo when running offscreen so the acquire fence is more likely to be vsynced */
+    if (x11_surface->offscreen && create_info->presentMode == VK_PRESENT_MODE_MAILBOX_KHR &&
+        !(use_xpresent && use_xfixes && usexcomposite))
         create_info_host.presentMode = VK_PRESENT_MODE_FIFO_KHR;
     x11_surface->present_mode = create_info->presentMode;
 
@@ -455,6 +492,8 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
 
     x11_surface->ref = 1;
     x11_surface->hwnd = create_info->hwnd;
+    x11_surface->known_child = FALSE;
+    x11_surface->swapchain_count = 0;
     if (x11_surface->hwnd)
     {
         x11_surface->hdc = GetDC(create_info->hwnd);
@@ -477,6 +516,8 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
 
     if (create_info->hwnd && (GetWindow( create_info->hwnd, GW_CHILD ) || NtUserGetAncestor( create_info->hwnd, GA_PARENT ) != NtUserGetDesktopWindow()))
     {
+        x11_surface->known_child = TRUE;
+        TRACE("hwnd %p creating offscreen child window surface\n", x11_surface->hwnd);
         if (!wine_vk_surface_set_offscreen(x11_surface, TRUE))
         {
             res = VK_ERROR_INCOMPATIBLE_DRIVER;
@@ -530,6 +571,7 @@ static void X11DRV_vkDestroySurfaceKHR(VkInstance instance, VkSurfaceKHR surface
         const VkAllocationCallbacks *allocator)
 {
     struct wine_vk_surface *x11_surface = surface_from_handle(surface);
+    HWND hwnd = x11_surface->hwnd;
 
     TRACE("%p 0x%s %p\n", instance, wine_dbgstr_longlong(surface), allocator);
 
@@ -542,6 +584,7 @@ static void X11DRV_vkDestroySurfaceKHR(VkInstance instance, VkSurfaceKHR surface
         pvkDestroySurfaceKHR(instance, x11_surface->surface, NULL /* allocator */);
 
         wine_vk_surface_release(x11_surface);
+        update_client_window(hwnd);
     }
 }
 
@@ -559,7 +602,10 @@ static void X11DRV_vkDestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapcha
 
     pthread_mutex_lock(&vulkan_mutex);
     if (!XFindContext(gdi_display, (XID)swapchain, vulkan_swapchain_context, (char **)&surface))
+    {
+        surface->swapchain_count--;
         wine_vk_surface_release(surface);
+    }
     XDeleteContext(gdi_display, (XID)swapchain, vulkan_swapchain_context);
     pthread_mutex_unlock(&vulkan_mutex);
 }

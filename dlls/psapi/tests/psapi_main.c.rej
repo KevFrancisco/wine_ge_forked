@@ -1,0 +1,11 @@
+--- dlls/psapi/tests/psapi_main.c
++++ dlls/psapi/tests/psapi_main.c
+@@ -563,7 +560,7 @@ static void test_GetProcessImageFileName(void)
+     {
+         /* Windows returns 2*strlen-1 */
+         ok(ret >= strlen(szImgPath), "szImgPath=\"%s\" ret=%d\n", szImgPath, ret);
+-        todo_wine ok(!strcmp(szImgPath, szMapPath), "szImgPath=\"%s\" szMapPath=\"%s\"\n", szImgPath, szMapPath);
++        ok(!strcmp(szImgPath, szMapPath), "szImgPath=\"%s\" szMapPath=\"%s\"\n", szImgPath, szMapPath);
+     }
+ 
+     SetLastError(0xdeadbeef);
