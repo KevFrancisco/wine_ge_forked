@@ -3448,6 +3448,7 @@ NTSTATUS virtual_handle_fault( void *addr, DWORD err, void *stack )
     return ret;
 }
 
+/*
 BOOL CDECL __wine_needs_override_large_address_aware(void)
 {
     static int needs_override = -1;
@@ -3460,6 +3461,7 @@ BOOL CDECL __wine_needs_override_large_address_aware(void)
     }
     return needs_override;
 }
+*/
 
 BOOL CDECL __wine_needs_override_large_address_aware(void)
 {
